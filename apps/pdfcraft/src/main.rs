@@ -70,6 +70,31 @@ fn migrate_legacy_folders() {
     }
 }
 
+/// Desktop launchers (GNOME Files, KDE Dolphin…) only recognise an app as the default handler for a
+/// mime type if its `Exec` takes URIs (`%u`/`%U`), not just paths (`%F`); the packaged `.desktop`
+/// file uses `%u` accordingly (packaging/linux/ai.storyteller.pdfcraft.desktop). Decode a `file://`
+/// argument to a plain path here so the rest of the app, which only ever opens paths, is unaffected.
+/// Other schemes (`http://`, `mailto:`…) and plain paths pass through untouched.
+fn path_from_arg(arg: String) -> String {
+    let Some(rest) = arg.strip_prefix("file://") else { return arg };
+    let mut out = Vec::with_capacity(rest.len());
+    let bytes = rest.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = bytes.get(i + 1..i + 3).and_then(|h| std::str::from_utf8(h).ok());
+            if let Some(byte) = hex.and_then(|h| u8::from_str_radix(h, 16).ok()) {
+                out.push(byte);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or(arg)
+}
+
 fn main() -> eframe::Result {
     // First, so the panic hook and every start-up warning are recorded (`logging`).
     let logger = logging::install();
@@ -107,7 +132,7 @@ fn main() -> eframe::Result {
                 let value = args.next().unwrap_or_default();
                 options.push((flag.trim_start_matches("--").to_string(), value));
             }
-            _ => files.push(a),
+            _ => files.push(path_from_arg(a)),
         }
     }
     let integrated = cfg!(target_os = "macos");
@@ -336,6 +361,19 @@ fn pick_adapter(adapters: &[(u32, u32, eframe::wgpu::DeviceType)], displays: &[(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn path_from_arg_decodes_file_uris() {
+        assert_eq!(super::path_from_arg("file:///home/alice/report.pdf".to_string()), "/home/alice/report.pdf");
+        assert_eq!(super::path_from_arg("file:///home/alice/my%20report.pdf".to_string()), "/home/alice/my report.pdf");
+    }
+
+    #[test]
+    fn path_from_arg_leaves_plain_paths_and_other_schemes_alone() {
+        assert_eq!(super::path_from_arg("report.pdf".to_string()), "report.pdf");
+        assert_eq!(super::path_from_arg("/home/alice/report.pdf".to_string()), "/home/alice/report.pdf");
+        assert_eq!(super::path_from_arg("https://example.com/report.pdf".to_string()), "https://example.com/report.pdf");
+    }
+
     #[test]
     fn gpu_backends_avoid_vulkan_on_windows_and_prefer_low_power() {
         let mut native = eframe::NativeOptions::default();
