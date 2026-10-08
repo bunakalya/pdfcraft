@@ -154,5 +154,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: windows-arm64-test
+      - name: Diagnose fill_sign (temporary)
+        run: cargo test --locked -p pdfcraft-ui-egui --test fill_sign -- --test-threads=1 --nocapture
+        continue-on-error: true
       - name: Test
         run: cargo test --workspace --locked
